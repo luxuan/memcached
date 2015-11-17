@@ -53,7 +53,7 @@ static pthread_mutex_t stats_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t worker_hang_lock;
 
 /* Free list of CQ_ITEM structs */
-static CQ_ITEM *cqi_freelist;
+static CQ_ITEM *cqi_freelist; // list header
 static pthread_mutex_t cqi_freelist_lock;
 
 static pthread_mutex_t *item_locks;
@@ -335,6 +335,7 @@ static void setup_thread(LIBEVENT_THREAD *me) {
     }
 
     /* Listen for notifications from other threads */
+    //为管道设置读事件监听，thread_libevent_process为回调函数
     event_set(&me->notify_event, me->notify_receive_fd,
               EV_READ | EV_PERSIST, thread_libevent_process, me);
     event_base_set(me->base, &me->notify_event);
@@ -344,11 +345,13 @@ static void setup_thread(LIBEVENT_THREAD *me) {
         exit(1);
     }
 
+    //为新线程创建连接CQ链表
     me->new_conn_queue = malloc(sizeof(struct conn_queue));
     if (me->new_conn_queue == NULL) {
         perror("Failed to allocate memory for connection queue");
         exit(EXIT_FAILURE);
     }
+    //初始化线程控制器内的CQ链表
     cq_init(me->new_conn_queue);
 
     if (pthread_mutex_init(&me->stats.mutex, NULL) != 0) {
@@ -356,6 +359,7 @@ static void setup_thread(LIBEVENT_THREAD *me) {
         exit(EXIT_FAILURE);
     }
 
+    //创建cache
     me->suffix_cache = cache_create("suffix", SUFFIX_SIZE, sizeof(char*),
                                     NULL, NULL);
     if (me->suffix_cache == NULL) {
@@ -390,15 +394,18 @@ static void thread_libevent_process(int fd, short which, void *arg) {
     CQ_ITEM *item;
     char buf[1];
 
+    //响应pipe可读事件，读取主线程向管道内写的1字节数据(见dispatch_conn_new()函数)
     if (read(fd, buf, 1) != 1)
         if (settings.verbose > 0)
             fprintf(stderr, "Can't read from libevent pipe\n");
 
     switch (buf[0]) {
     case 'c':
+    //从链接队列中取出一个conn
     item = cq_pop(me->new_conn_queue);
 
     if (NULL != item) {
+        //使用conn创建新的任务，并注册事件
         conn *c = conn_new(item->sfd, item->init_state, item->event_flags,
                            item->read_buffer_size, item->transport, me->base);
         if (c == NULL) {
@@ -444,6 +451,7 @@ void dispatch_conn_new(int sfd, enum conn_states init_state, int event_flags,
         return ;
     }
 
+    // round robin策略,last_thread由主线程维护
     int tid = (last_thread + 1) % settings.num_threads;
 
     LIBEVENT_THREAD *thread = threads + tid;
@@ -456,10 +464,12 @@ void dispatch_conn_new(int sfd, enum conn_states init_state, int event_flags,
     item->read_buffer_size = read_buffer_size;
     item->transport = transport;
 
+    //将新的连接push到对应线程的连接queue中
     cq_push(thread->new_conn_queue, item);
 
     MEMCACHED_CONN_DISPATCH(sfd, thread->thread_id);
     buf[0] = 'c';
+    // 通知对应线程已有新的连接进来
     if (write(thread->notify_send_fd, buf, 1) != 1) {
         perror("Writing to thread notify pipe");
     }

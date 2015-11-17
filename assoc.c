@@ -60,10 +60,12 @@ static bool started_expanding = false;
  */
 static unsigned int expand_bucket = 0;
 
+// hashtable初始化  
 void assoc_init(const int hashtable_init) {
     if (hashtable_init) {
         hashpower = hashtable_init;
     }
+    // 分配hashsize个buckets，每个bucket就是一个单向链表或null  
     primary_hashtable = calloc(hashsize(hashpower), sizeof(void *));
     if (! primary_hashtable) {
         fprintf(stderr, "Failed to init hashtable.\n");
@@ -75,10 +77,13 @@ void assoc_init(const int hashtable_init) {
     STATS_UNLOCK();
 }
 
+// 根据key和nkey查找对应的item，不存在返回NULL  
 item *assoc_find(const char *key, const size_t nkey, const uint32_t hv) {
     item *it;
     unsigned int oldbucket;
 
+     // 如果正在扩展中，且hash值映射到尚未移入新primary_hashtable中的item，在old_hashtable查找，  
+     // 当前即将扩展索引expand_bucket位置的bucket，大于等于expand_bucket表示还在old_hashtable中
     if (expanding &&
         (oldbucket = (hv & hashmask(hashpower - 1))) >= expand_bucket)
     {
@@ -90,6 +95,7 @@ item *assoc_find(const char *key, const size_t nkey, const uint32_t hv) {
     item *ret = NULL;
     int depth = 0;
     while (it) {
+        // 遍历单向链表，查找相应的item 
         if ((nkey == it->nkey) && (memcmp(key, ITEM_key(it), nkey) == 0)) {
             ret = it;
             break;
@@ -103,7 +109,12 @@ item *assoc_find(const char *key, const size_t nkey, const uint32_t hv) {
 
 /* returns the address of the item pointer before the key.  if *item == 0,
    the item wasn't found */
-
+// 比较函数assoc_find和_hashitem_before，发现两者只是返回值不同，
+// assoc_find使用了item指针（item*），而_hashitem_before使用了
+// item指针的指针（item**），查找过程都是一样的，_hashitem_before
+// 只是在assoc_delete中调用，返回指针的指针，方便直接修改指向的
+// 地址，从而删除此item；使用指针同样可以达到效果，但是必须修改
+// 指向的item的值，相比较前者效率更高。
 static item** _hashitem_before (const char *key, const size_t nkey, const uint32_t hv) {
     item **pos;
     unsigned int oldbucket;
@@ -123,9 +134,12 @@ static item** _hashitem_before (const char *key, const size_t nkey, const uint32
 }
 
 /* grows the hashtable to the next power of 2. */
+// 扩展hashtable（这里只分配新的hashtable指针数组，设置相应的标志等，  
+// 真正的扩展在assoc_maintenance_thread线程中完成）  
 static void assoc_expand(void) {
     old_hashtable = primary_hashtable;
 
+    // 扩大为原来的2倍  
     primary_hashtable = calloc(hashsize(hashpower + 1), sizeof(void *));
     if (primary_hashtable) {
         if (settings.verbose > 1)
@@ -153,6 +167,7 @@ static void assoc_start_expand(void) {
 }
 
 /* Note: this isn't an assoc_update.  The key must not already exist to call this */
+// 插入的item的key必须在hashtable中不存在，否则assert错误  
 int assoc_insert(item *it, const uint32_t hv) {
     unsigned int oldbucket;
 
@@ -161,9 +176,13 @@ int assoc_insert(item *it, const uint32_t hv) {
     if (expanding &&
         (oldbucket = (hv & hashmask(hashpower - 1))) >= expand_bucket)
     {
+        // 如果正在展开hashtable过程中，则将映射到expand_bucket之后的，  
+        // 即还没有展开的bucket部分，继续放在old_hashtable中，  
+        // 这样，当查询这些item时，从old_hashtable能够获得，参见assoc_find  
         it->h_next = old_hashtable[oldbucket];
         old_hashtable[oldbucket] = it;
     } else {
+        // 链表操作，放入链表起始位置  
         it->h_next = primary_hashtable[hv & hashmask(hashpower)];
         primary_hashtable[hv & hashmask(hashpower)] = it;
     }
@@ -171,6 +190,7 @@ int assoc_insert(item *it, const uint32_t hv) {
     pthread_mutex_lock(&hash_items_counter_lock);
     hash_items++;
     if (! expanding && hash_items > (hashsize(hashpower) * 3) / 2) {
+        // 当hashtable的填装因子大于3/2时，启动扩展  
         assoc_start_expand();
     }
     pthread_mutex_unlock(&hash_items_counter_lock);
@@ -179,7 +199,9 @@ int assoc_insert(item *it, const uint32_t hv) {
     return 1;
 }
 
+// 从hashtable中删除键值为key的item
 void assoc_delete(const char *key, const size_t nkey, const uint32_t hv) {
+    // TODO ?返回值是键值为key的item的指针的指针
     item **before = _hashitem_before(key, nkey, hv);
 
     if (*before) {
@@ -207,13 +229,16 @@ static volatile int do_run_maintenance_thread = 1;
 #define DEFAULT_HASH_BULK_MOVE 1
 int hash_bulk_move = DEFAULT_HASH_BULK_MOVE;
 
+// hashtable维护线程(hashtable扩展使用)  
 static void *assoc_maintenance_thread(void *arg) {
 
     mutex_lock(&maintenance_lock);
+    // 维护线程运行标志
     while (do_run_maintenance_thread) {
         int ii = 0;
 
         /* There is only one expansion thread, so no need to global lock. */
+        // 每次扩展hash_bulk_move(这里定义为1)个buckets到新的hashtable中  
         for (ii = 0; ii < hash_bulk_move && expanding; ++ii) {
             item *it, *next;
             int bucket;
@@ -276,8 +301,11 @@ static void *assoc_maintenance_thread(void *arg) {
 
 static pthread_t maintenance_tid;
 
+// 创建hashtable维护线程  
 int start_assoc_maintenance_thread() {
     int ret;
+    // 如果环境变量MEMCACHED_HASH_BULK_MOVE设置，则使用此设置值  
+    // 维护线程中，每次扩展的粒度(每次hash_bulk_move个buckets)  
     char *env = getenv("MEMCACHED_HASH_BULK_MOVE");
     if (env != NULL) {
         hash_bulk_move = atoi(env);
@@ -294,9 +322,10 @@ int start_assoc_maintenance_thread() {
     return 0;
 }
 
+// 停止hashtable维护线程  
 void stop_assoc_maintenance_thread() {
     mutex_lock(&maintenance_lock);
-    do_run_maintenance_thread = 0;
+    do_run_maintenance_thread = 0;// 结束标志
     pthread_cond_signal(&maintenance_cond);
     mutex_unlock(&maintenance_lock);
 

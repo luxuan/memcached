@@ -349,6 +349,7 @@ static const char *prot_text(enum protocol prot) {
     return rv;
 }
 
+// 该函数对套接字设置conn_listening监听事件，回调函数为event_handler，在事件响应函数中调用状态机。
 conn *conn_new(const int sfd, enum conn_states init_state,
                 const int event_flags,
                 const int read_buffer_size, enum network_transport transport,
@@ -4051,6 +4052,7 @@ static void drive_machine(conn *c) {
     while (!stop) {
 
         switch(c->state) {
+        //监听套接字发生事件,主线程自己处理的，workers线程永远不会执行此分支 
         case conn_listening:
             addrlen = sizeof(addr);
 #ifdef HAVE_ACCEPT4
@@ -4083,6 +4085,7 @@ static void drive_machine(conn *c) {
                 break;
             }
             if (!use_accept4) {
+                //新套接字设置非阻塞
                 if (fcntl(sfd, F_SETFL, fcntl(sfd, F_GETFL) | O_NONBLOCK) < 0) {
                     perror("setting O_NONBLOCK");
                     close(sfd);
@@ -4099,6 +4102,7 @@ static void drive_machine(conn *c) {
                 stats.rejected_conns++;
                 STATS_UNLOCK();
             } else {
+                //调度线程来处理连接，conn的状态设置为conn_new_cmd
                 dispatch_conn_new(sfd, conn_new_cmd, EV_READ | EV_PERSIST,
                                      DATA_BUFFER_SIZE, tcp_transport);
             }
@@ -4383,6 +4387,7 @@ void event_handler(const int fd, const short which, void *arg) {
         return;
     }
 
+    // drive_memcache是运转发动机，它根据链接的不同状态而采取不同的行为，状态枚举见：enum conn_states
     drive_machine(c);
 
     /* wait for next event */
@@ -4564,6 +4569,7 @@ static int server_socket(const char *interface,
         if (IS_UDP(transport)) {
             int c;
 
+            //由于UDP是无连接的，因此直接启动settings.num_threads_per_udp个线程来服务于UDP端口。
             for (c = 0; c < settings.num_threads_per_udp; c++) {
                 /* Allocate one UDP file descriptor per worker thread;
                  * this allows "stats conns" to separately list multiple
@@ -4599,6 +4605,7 @@ static int server_socket(const char *interface,
 static int server_sockets(int port, enum network_transport transport,
                           FILE *portnumber_file) {
     if (settings.inter == NULL) {
+        // 在server_sockets主要调用server_socket函数来实现
         return server_socket(settings.inter, port, transport, portnumber_file);
     } else {
         // tokenize them and bind to each one of them..
