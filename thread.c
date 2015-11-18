@@ -747,6 +747,7 @@ void memcached_thread_init(int nthreads, struct event_base *main_base) {
     cqi_freelist = NULL;
 
     /* Want a wide lock table, but don't waste memory */
+    // 设置bucket的锁: 1024-8192，任何一次读写均加锁
     if (nthreads < 3) {
         power = 10;
     } else if (nthreads < 4) {

@@ -1,67 +1,31 @@
 
 
-
-
-memcached源码学习-hashtable  http://blog.csdn.net/tankles/article/details/7032756
-
-hash部分的源码主要分布在assoc.h/c（hash查找、插入、删除，rehash策略）、hash.h/c（尽提供几个基本的hash函数）
-
-解决冲突的方法，memcached中采用了链地址法（或拉链法）
-
-primary_hashtable和old_hashtable，当hashtable的填装因子（memcached中硬编码为 3/2，无法确定如何定值的），assoc_maintenance_thread线程会将old_hashtable中的items以hash_bulk_move个buckets为单位，逐步移到primary_hashtable中。
-
-        对外接口：
-
-        // 完成primary_hashtable的初始化
-        void assoc_init(void);   
-
-        // 根据key和nkey查找对应的item
-        item *assoc_find(const char *key, const size_t nkey); 
-
-        // 将item插入hashtable中
-        int assoc_insert(item *item); 
-
-        // 从hashtable中删除key对应的item
-        void assoc_delete(const char *key, const size_t nkey);
-
-        // 下面两个函数分别为启动和结束hashtable维护的线程，如果不需要这个功能，可以不调用，就是会浪费primary_hashtable指针数组占用的内存资源
-        int start_assoc_maintenance_thread(void);
-        void stop_assoc_maintenance_thread(void);
-
-        void do_assoc_move_next_bucket(void); // 函数没有实现
-
-
-
-几个用到的变量：
-
-       static pthread_cond_t maintenance_cond; // 同步insert和hashtable维护线程的条件变量
-
-       static unsigned int hashpower = 16;          
-       #define hashsize(n) ((ub4)1<<(n))              //hashtable初始化大小设置为2^16
-       #define hashmask(n) (hashsize(n)-1)         // 初始hashmask=0x1111 1111 1111 1111，用来将哈希函数计算的结果映射到hashsize域内，hashmask二进制值永远是hashpower位1的串
-
-      static unsigned int hash_items = 0;            // hashtable中存在的item数量
-
-      static bool expanding = false;                     // 是否正在扩展的flag
-
-      static unsigned int expand_bucket = 0;      // 当前扩展的位置（old_hashtable中的索引）
-
-
-
-
-内存模型
+### 内存模型
 ![Memcached的内存结构图](http://dl.iteye.com/upload/attachment/0063/7784/3d879c0f-7cff-382c-846d-cb221a866226.png "Memcached的内存结构图")
 ==============================================================================================
 
-comment from:
+### comment from
+
 
 memcached源码分析之线程池机制（一） http://www.cnblogs.com/moonlove/archive/2012/07/10/2584428.html
 
 memcached源码分析之线程池机制（二） http://www.cnblogs.com/moonlove/archive/2012/07/10/2584833.html
 
+memcached源码学习-hashtable  http://blog.csdn.net/tankles/article/details/7032756
+
 Memcached源码分析之内存管理篇之item结构图及slab结构图  http://blog.csdn.net/yxnyxnyxnyxnyxn/article/details/7869900
 
-TODO 专栏>Memcached源码分析 http://blog.csdn.net/column/details/lc-memcached.html?page=1
+==============================================================================================
+
+### TO View
+
+**Memcached 源码剖析笔记**  http://files.cppblog.com/xguru/Memcached.pdf
+
+Memcached源码分析  http://calixwu.com/2014/11/memcached-yuanmafenxi.html
+
+libevent源码深度剖析一  http://blog.csdn.net/sparkliang/article/details/4957667
+
+==============================================================================================
 
 to view:
 从Memcached看锁竞争对服务器性能的巨大影响 http://my.oschina.net/wzwitblog/blog/163705

@@ -25,6 +25,7 @@
 #include <assert.h>
 #include <pthread.h>
 
+// 同步insert和hashtable维护线程的条件变量
 static pthread_cond_t maintenance_cond = PTHREAD_COND_INITIALIZER;
 static pthread_mutex_t maintenance_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t hash_items_counter_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -35,7 +36,9 @@ typedef  unsigned       char ub1;   /* unsigned 1-byte quantities */
 /* how many powers of 2's worth of buckets we use */
 unsigned int hashpower = HASHPOWER_DEFAULT;
 
+//hashtable初始化大小设置为2^16
 #define hashsize(n) ((ub4)1<<(n))
+// 初始hashmask=0x1111 1111 1111 1111，用来将哈希函数计算的结果映射到hashsize域内，hashmask二进制值永远是hashpower位1的串
 #define hashmask(n) (hashsize(n)-1)
 
 /* Main hash table. This is where we look except during expansion. */
@@ -48,9 +51,11 @@ static item** primary_hashtable = 0;
 static item** old_hashtable = 0;
 
 /* Number of items in the hash table. */
+// hashtable中存在的item数量
 static unsigned int hash_items = 0;
 
 /* Flag: Are we in the middle of expanding now? */
+// 是否正在扩展的flag
 static bool expanding = false;
 static bool started_expanding = false;
 
@@ -58,6 +63,7 @@ static bool started_expanding = false;
  * During expansion we migrate values with bucket granularity; this is how
  * far we've gotten so far. Ranges from 0 .. hashsize(hashpower - 1) - 1.
  */
+// 当前扩展的位置（old_hashtable中的索引）
 static unsigned int expand_bucket = 0;
 
 // hashtable初始化  
