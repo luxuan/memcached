@@ -56,8 +56,18 @@ typedef struct {
     bool run_complete;
 } crawlerstats_t;
 
+//  当 memcached 没有足够的内存使用时, 必须选择性地回收一些 item, 回收采用 LRU 算法, 这就需要维护
+//
+//  一个按照最近访问时间排序的 LRU 队列. 在 memcached 中,
+//
+//  每个 slabclass 维护一个链表, 比如 slabclass[i] 的链表头指针为 heads[i], 尾指针为 tails[i],
+//
+//  已分配出去的 item 都存储在链表中. 而且链表中 item 按照最近访问时间排序, 这样一些链表相当于
+//
+//  LRU 队列.
 static item *heads[LARGEST_ID];
 static item *tails[LARGEST_ID];
+
 static crawler crawlers[LARGEST_ID];
 static itemstats_t itemstats[LARGEST_ID];
 static unsigned int sizes[LARGEST_ID];
@@ -150,6 +160,7 @@ static size_t item_make_header(const uint8_t nkey, const int flags, const int nb
     return sizeof(item) + nkey + *nsuffix + nbytes;
 }
 
+// 从 slab 系统分配一个空闲 item
 item *do_item_alloc(char *key, const size_t nkey, const int flags,
                     const rel_time_t exptime, const int nbytes,
                     const uint32_t cur_hv) {
@@ -320,6 +331,11 @@ static void item_unlink_q(item *it) {
     pthread_mutex_unlock(&lru_locks[it->slabs_clsid]);
 }
 
+// 形成了一个完成的 item 后, 就要把它放入两个数据结构中, 一是 memcached 的哈希表,
+//
+// memcached 运行过程中只有一个哈希表, 二是 item 所在的 slabclass 的 LRU 队列.
+//
+// 每个 slabclass 都有一个 LRU 队列
 int do_item_link(item *it, const uint32_t hv) {
     MEMCACHED_ITEM_LINK(ITEM_key(it), it->nkey, it->nbytes);
     assert((it->it_flags & (ITEM_LINKED|ITEM_SLABBED)) == 0);
@@ -334,13 +350,18 @@ int do_item_link(item *it, const uint32_t hv) {
 
     /* Allocate a new CAS ID on link. */
     ITEM_set_cas(it, (settings.use_cas) ? get_cas_id() : 0);
+    // 把 item 放入哈希表
     assoc_insert(it, hv);
+    // 把 item 放入 LRU 队列
     item_link_q(it);
     refcount_incr(&it->refcount);
 
     return 1;
 }
 
+// do_item_unlink 与 do_item_unlink 做的工作相反, 把 item 从哈希表和 LRU 队列中删除,
+//
+// 而且还释放掉 item 所占的内存 (其实只是把 item 放到空闲链表中).
 void do_item_unlink(item *it, const uint32_t hv) {
     MEMCACHED_ITEM_UNLINK(ITEM_key(it), it->nkey, it->nbytes);
     if ((it->it_flags & ITEM_LINKED) != 0) {
@@ -349,7 +370,9 @@ void do_item_unlink(item *it, const uint32_t hv) {
         stats.curr_bytes -= ITEM_ntotal(it);
         stats.curr_items -= 1;
         STATS_UNLOCK();
+        // 从哈希表中删除 item
         assoc_delete(ITEM_key(it), it->nkey, hv);
+        // 释放 item 所占的内存
         item_unlink_q(it);
         do_item_remove(it);
     }
@@ -671,6 +694,10 @@ void item_stats_sizes(ADD_STAT add_stats, void *c) {
 }
 
 /** wrapper around assoc_find which does the lazy expiration logic */
+
+// 根据 key 找对应的 item, 找到了还要检查 item 是否超时. 
+//
+// 超时了的 item 将从哈希表和 LRU 队列中删除掉
 item *do_item_get(const char *key, const size_t nkey, const uint32_t hv) {
     item *it = assoc_find(key, nkey, hv);
     if (it != NULL) {

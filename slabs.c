@@ -24,14 +24,20 @@
 /* powers-of-N allocation structures */
 
 typedef struct {
+    // chunk size
     unsigned int size;      /* sizes of items */
     unsigned int perslab;   /* how many items per slab */
 
+    //slots 是回收的 item 链表, 从某个 slabclass 分配出去一个 item, 当 item 回收的时候,
+    //不是把这 item 使用的内存交还给 slab, 而是让这个 item 挂在 slots 链表的尾部. 
+    //sl_curr 表示当前链表中有多少个回收而来的空闲 item.
     void *slots;           /* list of item ptrs */
     unsigned int sl_curr;   /* total free items in list */
 
     unsigned int slabs;     /* how many slabs were allocated for this class */
 
+    // slabclass 可以拥有多个 slab, 这些 slab 就是通过 slab_list 数组来管理的, 
+    // list_size表示当前 slabclass 有多少个 slab.
     void **slab_list;       /* array of slab pointers */
     unsigned int list_size; /* size of prev array */
 
@@ -195,6 +201,8 @@ static void split_slab_page_into_freelist(char *ptr, const unsigned int id) {
     }
 }
 
+// 每个 slabclass 都拥有一些 slab, 当所有 slab 都用完时, memcached 会给它分配一个新的 slab,
+// do_slabs_newslab 就是做这个工作的.
 static int do_slabs_newslab(const unsigned int id) {
     slabclass_t *p = &slabclass[id];
     int len = settings.slab_reassign ? settings.item_size_max
@@ -225,6 +233,9 @@ static int do_slabs_newslab(const unsigned int id) {
 }
 
 /*@null@*/
+// 从指定的 slabclass, 即 slabclass[id], 分配大小为 size 的内存块供申请者使用.
+//
+//  分配的原则是, 优先从 slots 指向的空闲链表中分配, 空闲链表没有, 才从 slab 中分配一个空闲的 chunk.
 static void *do_slabs_alloc(const size_t size, unsigned int id, unsigned int *total_chunks) {
     slabclass_t *p;
     void *ret = NULL;
@@ -240,6 +251,8 @@ static void *do_slabs_alloc(const size_t size, unsigned int id, unsigned int *to
     *total_chunks = p->slabs * p->perslab;
     /* fail unless we have space at the end of a recently allocated page,
        we have something on our freelist, or we could allocate a new page */
+    // p->sl_curr == 0 && do_slabs_newslab(id) == 0
+    // TODO 若分配新的slab后，什么都不干？
     if (! (p->sl_curr != 0 || do_slabs_newslab(id) != 0)) {
         /* We don't have more memory available */
         ret = NULL;
@@ -266,6 +279,9 @@ static void *do_slabs_alloc(const size_t size, unsigned int id, unsigned int *to
     return ret;
 }
 
+// 把 ptr 指向的 item 归还给 slabclass[id]
+//
+// 操作很简单, 把 ptr 指向的 item 挂在 slots 空闲链表的最前面
 static void do_slabs_free(void *ptr, const size_t size, unsigned int id) {
     slabclass_t *p;
     item *it;
@@ -910,6 +926,10 @@ int start_slab_maintenance_thread(void) {
     }
     pthread_mutex_init(&slabs_rebalance_lock, NULL);
 
+    /* automove线程(slab_maintenance_thread)会自动检测是否需要进行内存页重分配。
+     * 如果检测到需要重分配，那么就会叫rebalance线程执行这个内存页重分配工作。
+     * TOVIEW: http://blog.csdn.net/luotuo44/article/details/43015129
+     * */
     if ((ret = pthread_create(&maintenance_tid, NULL,
                               slab_maintenance_thread, NULL)) != 0) {
         fprintf(stderr, "Can't create slab maint thread: %s\n", strerror(ret));

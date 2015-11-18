@@ -1,3 +1,9 @@
+
+
+
+
+memcached源码学习-hashtable  http://blog.csdn.net/tankles/article/details/7032756
+
 hash部分的源码主要分布在assoc.h/c（hash查找、插入、删除，rehash策略）、hash.h/c（尽提供几个基本的hash函数）
 
 解决冲突的方法，memcached中采用了链地址法（或拉链法）
@@ -41,13 +47,19 @@ primary_hashtable和old_hashtable，当hashtable的填装因子（memcached中�
       static unsigned int expand_bucket = 0;      // 当前扩展的位置（old_hashtable中的索引）
 
 
+
+
+内存模型
+![Memcached的内存结构图](http://dl.iteye.com/upload/attachment/0063/7784/3d879c0f-7cff-382c-846d-cb221a866226.png "Memcached的内存结构图")
+==============================================================================================
+
 comment from:
 
 memcached源码分析之线程池机制（一） http://www.cnblogs.com/moonlove/archive/2012/07/10/2584428.html
 
 memcached源码分析之线程池机制（二） http://www.cnblogs.com/moonlove/archive/2012/07/10/2584833.html
 
-memcached源码学习-hashtable  http://blog.csdn.net/tankles/article/details/7032756
+Memcached源码分析之内存管理篇之item结构图及slab结构图  http://blog.csdn.net/yxnyxnyxnyxnyxn/article/details/7869900
 
 TODO 专栏>Memcached源码分析 http://blog.csdn.net/column/details/lc-memcached.html?page=1
 

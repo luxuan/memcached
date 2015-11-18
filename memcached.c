@@ -5569,15 +5569,19 @@ int main (int argc, char **argv) {
     }
 
     /* lose root privileges if we have them */
+    // uid==0表示以root运行程序  
     if (getuid() == 0 || geteuid() == 0) {
+        // 以root运行程序，同时未指定新的用户名称  
         if (username == 0 || *username == '\0') {
             fprintf(stderr, "can't run as root without the -u switch\n");
             exit(EX_USAGE);
         }
+        //判断是否存在指定的用户名称  
         if ((pw = getpwnam(username)) == 0) {
             fprintf(stderr, "can't find the user %s to switch to\n", username);
             exit(EX_NOUSER);
         }
+        //按新的用户修改memcached的执行权限位
         if (setgid(pw->pw_gid) < 0 || setuid(pw->pw_uid) < 0) {
             fprintf(stderr, "failed to assume identity of user %s\n", username);
             exit(EX_OSERR);
@@ -5602,6 +5606,9 @@ int main (int argc, char **argv) {
     }
 
     /* lock paged memory if needed */
+    // 锁定内存，默认分配的内存都是虚拟内存，在程序执行过程中可以按需换出，
+    // 如果内存充足的话，可以锁定内存，不让系统将该进程所持有的内存换出。
+    // TOVIEW: http://blog.csdn.net/lcli2009/article/details/21476847
     if (lock_memory) {
 #ifdef HAVE_MLOCKALL
         int res = mlockall(MCL_CURRENT | MCL_FUTURE);
@@ -5627,6 +5634,8 @@ int main (int argc, char **argv) {
      * ignore SIGPIPE signals; we can use errno == EPIPE if we
      * need that information
      */
+    // 忽略PIPE信号，PIPE信号是当网络连接一端已经断开，这时发送数据，会进行RST的重定向，
+    // 再次发送数据，会触发PIPE信号，而PIPE信号的默认动作是退出进程，所以需要忽略该信号。
     if (sigignore(SIGPIPE) == -1) {
         perror("failed to ignore SIGPIPE; sigaction");
         exit(EX_OSERR);
@@ -5720,6 +5729,7 @@ int main (int argc, char **argv) {
         exit(EXIT_FAILURE);
     }
 
+    // 保存daemon进程的进程id到文件中，这样便于控制程序，读取文件内容，即可得到进程ID。 
     if (pid_file != NULL) {
         save_pid(pid_file);
     }
